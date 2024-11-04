@@ -22,9 +22,13 @@ type Model struct {
 }
 
 type ModelConfig struct {
-	R [][]float64 `json:"R"`
-	P [][]float64 `json:"P"`
-	Q [][]float64 `json:"Q"`
+	NumFeatures    int         `json:"numFeatures"`
+	Epochs         int         `json:"epochs"`
+	LearningRate   float64     `json:"learningRate"`
+	Regularization float64     `json:"regularization"`
+	R              [][]float64 `json:"R"`
+	P              [][]float64 `json:"P"`
+	Q              [][]float64 `json:"Q"`
 }
 
 func LoadTrainData(filename string) ([][]float64, error) {
@@ -165,9 +169,13 @@ func (model *Model) CalculateRMSE() float64 {
 
 func (model *Model) ParamsToJson(filename string) error {
 	params := ModelConfig{
-		R: model.R,
-		P: model.P,
-		Q: model.Q,
+		NumFeatures:    model.numFeatures,
+		Epochs:         model.epochs,
+		LearningRate:   model.learningRate,
+		Regularization: model.regularization,
+		R:              model.R,
+		P:              model.P,
+		Q:              model.Q,
 	}
 
 	jsonData, err := json.MarshalIndent(params, "", "\t")
@@ -239,9 +247,9 @@ func findMostSimilarUser(newUserRatings map[int]float64, model *Model) int {
 	maxSimilarity := -1.0
 	mostSimilarUser := -1
 
-	for u, _ := range model.P {
+	for u := range model.P {
 		existingUserRatings := make([]float64, len(newUserRatings))
-		for i, _ := range newUserRatings {
+		for i := range newUserRatings {
 			existingUserRatings[i] = model.R[u][i]
 		}
 		similarity := cosineSimilarity(existingUserRatings, model.R[u])

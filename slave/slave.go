@@ -3,6 +3,7 @@ package slave
 import (
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"recommendation-service/model"
 	"recommendation-service/syncutils"
@@ -10,35 +11,14 @@ import (
 )
 
 type Slave struct {
-	ip       string
-	masterIp string
-	model    model.Model
+	ip            string
+	masterIp      string
+	model         model.Model
+	movieGenreIds [][]int
 }
 
-/*
-	type SlaveConfig struct {
-		SlaveAddress string `json:"slaveAddress"`
-	}
-
-	func (slave *Slave) loadConfig(filename string) error {
-		var slaveConfig SlaveConfig
-		err := syncutils.LoadJsonFile(filename, &slaveConfig)
-		if err != nil {
-			return fmt.Errorf("loadConfig: Error loading config file: %v", err)
-		}
-
-		return nil
-	}
-*/
 func (slave *Slave) Init() error {
 	slave.ip = syncutils.GetOwnIp()
-	/*
-		err := slave.loadConfig("config/slave.json")
-		if err != nil {
-			return fmt.Errorf("initError: Error loading config: %v", err)
-		}
-	*/
-
 	return nil
 }
 
@@ -137,8 +117,8 @@ func (slave *Slave) handleRecommendation(conn *net.Conn) {
 	defer (*conn).Close()
 	log.Println("INFO: Start handling recommendation")
 
-	var recRequest syncutils.MasterRecRequest
-	err := receiveRecRequest(&recRequest, conn)
+	var request syncutils.MasterRecRequest
+	err := receiveRecRequest(&request, conn)
 	if err != nil {
 		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
 		return
@@ -146,7 +126,7 @@ func (slave *Slave) handleRecommendation(conn *net.Conn) {
 	log.Println("INFO: Recommendation request received")
 
 	var response syncutils.SlaveRecResponse
-	err = slave.getModelRecommendation(&response, recRequest.UserId, recRequest.StartMovieId, recRequest.EndMovieId, recRequest.Quantity)
+	err = slave.processRecommendation(&response, &request)
 	if err != nil {
 		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
 		return
@@ -169,26 +149,61 @@ func receiveRecRequest(recRequest *syncutils.MasterRecRequest, conn *net.Conn) e
 	return nil
 }
 
-func (slave *Slave) getModelRecommendation(response *syncutils.SlaveRecResponse, userId, startMovieId, endMovieId, quantity int) error {
-	pred := make([]syncutils.Prediction, endMovieId-startMovieId)
-	size := 0
-	for movieId := startMovieId; movieId < endMovieId; movieId++ {
-		if slave.model.R[userId][movieId] == 0 {
-			pred[size] = syncutils.Prediction{
-				MovieId: movieId,
-				Rating:  slave.model.Predict(userId, movieId),
+func (slave *Slave) processRecommendation(response *syncutils.SlaveRecResponse, request *syncutils.MasterRecRequest) error {
+
+	sum := 0.0
+	max := math.Inf(-1)
+	min := math.Inf(1)
+	count := 0
+
+	pred := make([]syncutils.Prediction, request.EndMovieId-request.StartMovieId)
+	for movieId := request.StartMovieId; movieId < request.EndMovieId; movieId++ {
+		if slave.model.R[request.UserId][movieId] == 0 {
+			if len(request.GenreIds) > 0 {
+				if !containsAll(slave.movieGenreIds[movieId], request.GenreIds) {
+					continue
+				}
 			}
-			size++
+			rating := slave.model.Predict(request.UserId, movieId)
+			pred[count] = syncutils.Prediction{
+				MovieId: movieId,
+				Rating:  rating,
+			}
+			if max < rating {
+				max = rating
+			}
+			if min > rating {
+				min = rating
+			}
+			sum += rating
+			count++
 		}
 	}
-	pred = pred[:size]
-	if size > quantity {
+	pred = pred[:count]
+	if count > request.Quantity {
 		sort.Slice(pred, func(i, j int) bool {
 			return pred[i].Rating > pred[j].Rating
 		})
-		response.Predictions = pred[:quantity]
+		response.Predictions = pred[:request.Quantity]
 	}
+	response.Sum = sum
+	response.Max = max
+	response.Min = min
+	response.Count = count
 	return nil
+}
+
+func containsAll(movieGenres, requestGenres []int) bool {
+	genreMap := make(map[int]bool)
+	for _, genre := range movieGenres {
+		genreMap[genre] = true
+	}
+	for _, genre := range requestGenres {
+		if !genreMap[genre] {
+			return false
+		}
+	}
+	return true
 }
 
 func respondRecRequest(response *syncutils.SlaveRecResponse, conn *net.Conn) error {

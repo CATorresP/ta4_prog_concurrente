@@ -17,8 +17,9 @@ const (
 )
 
 type MasterSyncRequest struct {
-	MasterIp    string            `json:"masterIp"`
-	ModelConfig model.ModelConfig `json:"modelConfig"`
+	MasterIp      string            `json:"masterIp"`
+	MovieGenreIds [][]string        `json:"movieGenreIds"`
+	ModelConfig   model.ModelConfig `json:"modelConfig"`
 }
 
 type SlaveSyncResponse struct {
@@ -27,15 +28,17 @@ type SlaveSyncResponse struct {
 
 // Recommendation Communication
 type ClientRecRequest struct {
-	UserId   int `json:"userId"`
-	Quantity int `json:"quantity"`
+	UserId   int   `json:"userId"`
+	Quantity int   `json:"quantity"`
+	GenreIds []int `json:"genreIds"`
 }
 
 type MasterRecRequest struct {
-	UserId       int `json:"userId"`
-	StartMovieId int `json:"startMovieId"`
-	EndMovieId   int `json:"endMovieId"`
-	Quantity     int `json:"quantity"`
+	UserId       int   `json:"userId"`
+	StartMovieId int   `json:"startMovieId"`
+	EndMovieId   int   `json:"endMovieId"`
+	Quantity     int   `json:"quantity"`
+	GenreIds     []int `json:"genreIds"`
 }
 
 type MasterRecResponse struct {
@@ -44,13 +47,19 @@ type MasterRecResponse struct {
 }
 
 type Recommendation struct {
-	MovieId    int     `json:"movieId"`
-	MovieTitle string  `json:"movieTitle"`
-	Rating     float64 `json:"rating"`
+	Id      int      `json:"id"`
+	Title   string   `json:"title"`
+	Genres  []string `json:"genres"`
+	Rating  float64  `json:"rating"`
+	Comment string   `json:"comment"`
 }
 
 type SlaveRecResponse struct {
 	Predictions []Prediction `json:"predictions"`
+	Sum         float64      `json:"sum"`
+	Min         float64      `json:"min"`
+	Max         float64      `json:"max"`
+	Count       int          `json:"count"`
 }
 
 type Prediction struct {

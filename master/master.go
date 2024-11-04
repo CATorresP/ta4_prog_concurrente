@@ -12,20 +12,22 @@ import (
 )
 
 type Master struct {
-	ip          string
-	movieTitles []string
-	modelConfig model.ModelConfig
-	//Genres	  []string
-	//moviesGenres [][]string
-
-	slaveIps   []string
-	slavesInfo SafeCounts
+	ip              string
+	movieTitles     []string
+	movieGenreNames []string
+	movieGenreIds   [][]int
+	modelConfig     model.ModelConfig
+	slaveIps        []string
+	slavesInfo      SafeCounts
 }
 
+// Considerar poner las información de las peliculas en una clase
 type MasterConfig struct {
-	SlaveIps    []string          `json:"slaveIps"`
-	MovieTitles []string          `json:"movieTitles"`
-	ModelConfig model.ModelConfig `json:"modelConfig"`
+	SlaveIps        []string          `json:"slaveIps"`
+	MovieTitles     []string          `json:"movieTitles"`
+	MovieGenreNames []string          `json:"movieGenreNames"`
+	MovieGenreIds   [][]int           `json:"movieGenreIds"`
+	ModelConfig     model.ModelConfig `json:"modelConfig"`
 }
 
 type SafeCounts struct {
@@ -161,10 +163,10 @@ func (master *Master) handleSyncronization() {
 		if !master.slavesInfo.ReadStatustByIndex(i) {
 			go func(slaveId int, ip string) {
 				for {
+					time.Sleep(time.Second * 60)
 					err := master.handleSlaveSync(slaveId, ip)
 					if err != nil {
 						log.Println(err)
-						time.Sleep(time.Second * 60)
 						continue
 					}
 					break
@@ -200,6 +202,8 @@ func (master *Master) sendSyncRequest(conn *net.Conn) error {
 		MasterIp:    master.ip,
 		ModelConfig: master.modelConfig,
 	}
+	request.ModelConfig.P = nil
+
 	err := syncutils.SendObjectAsJsonMessage(&request, conn)
 	if err != nil {
 		return fmt.Errorf("syncRequestErr: Error sending request object as json: %v", err)
@@ -224,17 +228,19 @@ func (master *Master) loadConfig(filename string) error {
 
 	master.slaveIps = config.SlaveIps
 	master.movieTitles = config.MovieTitles
+	master.movieGenreNames = config.MovieGenreNames
+	master.movieGenreIds = config.MovieGenreIds
 	master.modelConfig = config.ModelConfig
 
 	return nil
 }
 
 func (master *Master) Init() error {
+	master.ip = syncutils.GetOwnIp()
 	err := master.loadConfig("config/master.json")
 	if err != nil {
 		return fmt.Errorf("initError: Error loading config: %v", err)
 	}
-
 	numSlaves := len(master.slaveIps)
 	master.slavesInfo.Counts = make([]int, numSlaves)
 	master.slavesInfo.Status = make([]bool, numSlaves)
@@ -276,24 +282,52 @@ func (master *Master) handleRecommendation(conn *net.Conn) {
 	err := receiveRecommendationRequest(conn, &request)
 	if err != nil {
 		log.Printf("ERROR: handleRecErr: %v", err)
+		return
 	}
+
 	log.Printf("INFO: handleRec: Request received\n")
 	var predictions []syncutils.Prediction
-	master.handleModelRecommendation(&predictions, &request)
+	var sum float64
+	var max float64
+	var min float64
+	var count int
+	master.handleModelRecommendation(&predictions, &sum, &max, &min, &count, &request)
+
 	var response syncutils.MasterRecResponse
+	var mean float64
+	if count > 0 {
+		mean = sum / float64(count)
+	}
 
 	response.UserId = request.UserId
 	response.Recommendations = make([]syncutils.Recommendation, len(predictions))
 	for i, prediction := range predictions {
-		response.Recommendations[i].MovieId = prediction.MovieId
-		response.Recommendations[i].MovieTitle = master.movieTitles[prediction.MovieId]
+		response.Recommendations[i].Id = prediction.MovieId
+		response.Recommendations[i].Title = master.movieTitles[prediction.MovieId]
 		response.Recommendations[i].Rating = prediction.Rating
+		response.Recommendations[i].Genres = make([]string, len(master.movieGenreIds[prediction.MovieId]))
+		for j, genreId := range master.movieGenreIds[prediction.MovieId] {
+			response.Recommendations[i].Genres[j] = master.movieGenreNames[genreId]
+		}
+		response.Recommendations[i].Comment = getComment(prediction.Rating, max, min, mean)
 	}
 	err = sendRecommendationResponse(conn, &response)
 	if err != nil {
 		log.Printf("ERROR: handleRecErr: %v", err)
+		return
 	}
 	log.Printf("INFO: handleRec: Response sent\n")
+}
+func getComment(rating, max, min, mean float64) string {
+	if rating > (max+mean)/2 {
+		return "Altamente Recomendado. Muy por encima de la media"
+	} else if rating > mean {
+		return "Recomendado. Por encima de la media"
+	} else if rating > (mean+min)/2 {
+		return "Poco Recomendado. Por debajo de la media"
+	} else {
+		return "Muy poco recomendado. Muy por debajo de la media"
+	}
 }
 
 func receiveRecommendationRequest(conn *net.Conn, request *syncutils.ClientRecRequest) error {
@@ -304,10 +338,11 @@ func receiveRecommendationRequest(conn *net.Conn, request *syncutils.ClientRecRe
 	return nil
 }
 
-func (master *Master) handleModelRecommendation(predictions *[]syncutils.Prediction, request *syncutils.ClientRecRequest) error {
+func (master *Master) handleModelRecommendation(predictions *[]syncutils.Prediction, sum, max, min *float64, count *int, request *syncutils.ClientRecRequest) error {
 	beginStatus := master.slavesInfo.ReadStatus()
 	log.Println("Start handling recommendation request. Begin status:", beginStatus)
 	defer log.Println("End handling recommendation request.")
+
 	nBatches := 0
 	for _, active := range beginStatus {
 		if active {
@@ -318,10 +353,11 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 		return fmt.Errorf("RecRequestErr: No active slaves")
 	}
 	log.Println("Number of batches:", nBatches)
-	batches := master.createBatches(nBatches, request.UserId, request.Quantity)
+	batches := master.createBatches(nBatches, request.UserId, request.Quantity, request.GenreIds)
 	log.Println("Batches created:", batches)
 	ch := make(chan *syncutils.SlaveRecResponse, nBatches)
 	activeSlaveIds := master.slavesInfo.GetActiveIdsByStatus(true)
+
 	go func() {
 		var wg sync.WaitGroup
 		for batchId, batch := range batches {
@@ -343,9 +379,18 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 		wg.Wait()
 		close(ch)
 	}()
+
 	var tempPredictions []syncutils.Prediction
 	for partialResponse := range ch {
 		tempPredictions = append(tempPredictions, partialResponse.Predictions...)
+		*sum += partialResponse.Sum
+		*count += partialResponse.Count
+		if partialResponse.Max > *max {
+			*max = partialResponse.Max
+		}
+		if partialResponse.Min < *min {
+			*min = partialResponse.Min
+		}
 		if len(tempPredictions) > request.Quantity {
 			sort.Slice(tempPredictions, func(i, j int) bool {
 				return tempPredictions[i].Rating > tempPredictions[j].Rating
@@ -394,7 +439,7 @@ func (master *Master) handleRecommendationRequestBatch(batchId int, batch *syncu
 	}
 	return nil
 }
-func (master *Master) createBatches(nBatches, userId int, quantity int) []syncutils.MasterRecRequest {
+func (master *Master) createBatches(nBatches, userId int, quantity int, genreIds []int) []syncutils.MasterRecRequest {
 	batches := make([]syncutils.MasterRecRequest, nBatches)
 	var rangeSize int = len(master.movieTitles) / nBatches
 	var startMovieId int = 0
@@ -408,6 +453,7 @@ func (master *Master) createBatches(nBatches, userId int, quantity int) []syncut
 			StartMovieId: startMovieId,
 			EndMovieId:   endMovieId,
 			Quantity:     quantity,
+			GenreIds:     genreIds,
 		}
 		startMovieId = endMovieId
 	}
