@@ -10,72 +10,68 @@ import (
 )
 
 type Slave struct {
-	lstn          net.Listener
-	slaveAddress  string
-	masterAddress string
-	model         model.Model
+	ip       string
+	masterIp string
+	model    model.Model
 }
 
-// Creación de nodo esclavo
-func NewSlave(address string) Slave {
-	return Slave{slaveAddress: address}
-}
-
-type SlaveConfig struct {
-	SlaveAddress string `json:"slaveAddress"`
-}
-
-func (slave *Slave) loadConfig(filename string) error {
-	var slaveConfig SlaveConfig
-	err := syncutils.LoadJsonFile(filename, &slaveConfig)
-	if err != nil {
-		return fmt.Errorf("loadConfig: Error loading config file: %v", err)
+/*
+	type SlaveConfig struct {
+		SlaveAddress string `json:"slaveAddress"`
 	}
 
-	slave.slaveAddress = slaveConfig.SlaveAddress
+	func (slave *Slave) loadConfig(filename string) error {
+		var slaveConfig SlaveConfig
+		err := syncutils.LoadJsonFile(filename, &slaveConfig)
+		if err != nil {
+			return fmt.Errorf("loadConfig: Error loading config file: %v", err)
+		}
 
-	return nil
-}
-
+		return nil
+	}
+*/
 func (slave *Slave) Init() error {
-	err := slave.loadConfig("config/slave.json")
-	if err != nil {
-		return fmt.Errorf("initError: Error loading config: %v", err)
-	}
+	slave.ip = syncutils.GetOwnIp()
+	/*
+		err := slave.loadConfig("config/slave.json")
+		if err != nil {
+			return fmt.Errorf("initError: Error loading config: %v", err)
+		}
+	*/
 
 	return nil
 }
 
 func (slave *Slave) Run() {
-	var err error
-	slave.lstn, err = net.Listen("tcp", slave.slaveAddress)
-	log.Println("Slave listening on", slave.slaveAddress)
-	if err != nil {
-		fmt.Println("runError: Error setting local listener:", err)
-	}
-	defer slave.lstn.Close()
-
 	for {
 		slave.handleSynchronization()
-		slave.handleRecs()
+		slave.handleRecommendations()
 	}
 }
 
 // Proceso de sincronización
 func (slave *Slave) handleSynchronization() {
+	syncLstn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", slave.ip, syncutils.SyncronizationPort))
+	log.Println("Slave listening for syncronization on", fmt.Sprintf("%s:%d", slave.ip, syncutils.SyncronizationPort))
+	if err != nil {
+		log.Println("ERROR: syncErr: Error setting local listener:", err)
+		return
+	}
+	defer syncLstn.Close()
+
 	success := false
 	for !success {
-		conn, err := slave.lstn.Accept()
+		conn, err := syncLstn.Accept()
 		if err != nil {
-			log.Printf("syncError: Connection error: %v", err)
+			log.Printf("ERROR: syncErr: Connection error: %v", err)
 			continue
 		}
 		err = slave.handleSyncRequest(&conn)
 		if err != nil {
-			log.Printf("syncError: Error handling sync request: %v", err)
+			log.Printf("ERROR: syncErr: Error handling sync request: %v", err)
 			continue
 		}
-		log.Println("Synchronization successful")
+		log.Println("INFO: Synchronization successful")
 		break
 	}
 }
@@ -83,13 +79,15 @@ func (slave *Slave) handleSynchronization() {
 // Procesamiento de solicitud de sincronización
 func (slave *Slave) handleSyncRequest(conn *net.Conn) error {
 	defer (*conn).Close()
-	log.Println("Start handling sync request")
+	log.Println("INFO: Start handling sync request")
 
 	var syncRequest syncutils.MasterSyncRequest
 	slave.receiveSyncRequest(conn, &syncRequest)
 
-	slave.masterAddress = syncRequest.MasterAddress
+	slave.masterIp = syncRequest.MasterIp
 	slave.model = model.LoadModel(&syncRequest.ModelConfig)
+	log.Println("IP: ", slave.ip)
+	log.Println("Master IP: ", slave.masterIp)
 	log.Println("Model loaded")
 	log.Println("R: ", len(slave.model.R), ", ", len(slave.model.R[0]))
 	log.Println("P: ", len(slave.model.P), ", ", len(slave.model.P[0]))
@@ -116,39 +114,57 @@ func (slave *Slave) repondSyncRequest(conn *net.Conn) error {
 	return nil
 }
 
-func (slave *Slave) handleRecs() {
+func (slave *Slave) handleRecommendations() {
+	log.Println("INFO: Start handling recs")
+	recLstn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", slave.ip, syncutils.RecommendationPort))
+	log.Println("Slave listening for recommendation requests on", fmt.Sprintf("%s:%d", slave.ip, syncutils.RecommendationPort))
+	if err != nil {
+		log.Printf("ERROR: recErr: Error setting local listener: %v", err)
+		return
+	}
+	defer recLstn.Close()
 	for {
-		conn, err := slave.lstn.Accept()
+		conn, err := recLstn.Accept()
 		if err != nil {
-			fmt.Println("recError. Incoming connection error:", err)
+			log.Printf("ERROR: recError: Incoming connection error: %v", err)
 			continue
 		}
-		go slave.handleRecommendationRequest(&conn)
+		go slave.handleRecommendation(&conn)
 	}
 }
 
-func (slave *Slave) handleRecommendationRequest(conn *net.Conn) {
+func (slave *Slave) handleRecommendation(conn *net.Conn) {
 	defer (*conn).Close()
-	log.Println("Start handling rec request")
+	log.Println("INFO: Start handling recommendation")
+
 	var recRequest syncutils.MasterRecRequest
-	receiveRecRequest(&recRequest, conn)
-	log.Println("INFO: Rec request received: ", recRequest)
+	err := receiveRecRequest(&recRequest, conn)
+	if err != nil {
+		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
+		return
+	}
+	log.Println("INFO: Recommendation request received")
 
 	var response syncutils.SlaveRecResponse
-	err := slave.getModelRecommendation(&response, recRequest.UserId, recRequest.StartMovieId, recRequest.EndMovieId, recRequest.Quantity)
+	err = slave.getModelRecommendation(&response, recRequest.UserId, recRequest.StartMovieId, recRequest.EndMovieId, recRequest.Quantity)
 	if err != nil {
-		log.Printf("recError: Error getting recommendations: %v", err)
+		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
+		return
 	}
-	err = syncutils.SendObjectAsJsonMessage(&response, conn)
+	log.Println("INFO: Recommendations obtained")
+
+	err = respondRecRequest(&response, conn)
 	if err != nil {
-		log.Printf("recError: Error sending recommendations: %v", err)
+		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
+		return
 	}
+	log.Println("INFO: Recommendation handled successfully")
 }
 
 func receiveRecRequest(recRequest *syncutils.MasterRecRequest, conn *net.Conn) error {
 	err := syncutils.ReceiveJsonMessageAsObject(recRequest, conn)
 	if err != nil {
-		return fmt.Errorf("recRequestErr. Error receiving request: %v", err)
+		return fmt.Errorf("recReceiveRequestErr: Error receiving request: %v", err)
 	}
 	return nil
 }
@@ -171,6 +187,14 @@ func (slave *Slave) getModelRecommendation(response *syncutils.SlaveRecResponse,
 			return pred[i].Rating > pred[j].Rating
 		})
 		response.Predictions = pred[:quantity]
+	}
+	return nil
+}
+
+func respondRecRequest(response *syncutils.SlaveRecResponse, conn *net.Conn) error {
+	err := syncutils.SendObjectAsJsonMessage(response, conn)
+	if err != nil {
+		return fmt.Errorf("recRespondRequestErr: Error sending response: %v", err)
 	}
 	return nil
 }

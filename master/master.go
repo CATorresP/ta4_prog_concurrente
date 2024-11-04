@@ -12,32 +12,20 @@ import (
 )
 
 type Master struct {
-	// statics
-	serviceAddress string
-	masterAddress  string
-	movieTitles    []string
-	modelConfig    model.ModelConfig
+	ip          string
+	movieTitles []string
+	modelConfig model.ModelConfig
+	//Genres	  []string
+	//moviesGenres [][]string
 
-	// dynamics
-	syncLstn       net.Listener
-	serviceLstn    net.Listener
-	slaveAddresses []string
-	slavesInfo     SafeCounts
+	slaveIps   []string
+	slavesInfo SafeCounts
 }
 
-/*
-slaveIsActive          []bool
-slaveIsActiveMutex     sync.RWMutex
-slaveRequestCount      []int
-slaveRequestCountMutex sync.RWMutex
-*/
-
 type MasterConfig struct {
-	MasterAddress  string            `json:"masterAddress"`
-	ServiceAddress string            `json:"serviceAddress"`
-	SlaveAddress   []string          `json:"slaveAddress"`
-	MovieTitles    []string          `json:"movieTitles"`
-	ModelConfig    model.ModelConfig `json:"modelConfig"`
+	SlaveIps    []string          `json:"slaveIps"`
+	MovieTitles []string          `json:"movieTitles"`
+	ModelConfig model.ModelConfig `json:"modelConfig"`
 }
 
 type SafeCounts struct {
@@ -145,30 +133,35 @@ func (sd *SafeCounts) GetActiveIdsByStatus(status bool) []int {
 }
 
 func (master *Master) handleSyncronization() {
-	log.Println("Handling syncronization")
-
+	log.Println("INFO: Start synchronization")
 	var wg sync.WaitGroup
-	for i, address := range master.slaveAddresses {
+	for i, ip := range master.slaveIps {
 		if !master.slavesInfo.ReadStatustByIndex(i) {
 			wg.Add(1)
-			go func(slaveId int, address string) {
+			go func(slaveId int, ip string) {
 				defer wg.Done()
-				err := master.handleSlaveSync(i, address)
+				err := master.handleSlaveSync(i, ip)
 				if err != nil {
 					log.Println(err)
 				}
-			}(i, address)
+			}(i, ip)
 		}
 	}
 	wg.Wait()
+	for i, status := range master.slavesInfo.ReadStatus() {
+		if !status {
+			log.Printf("INFO: Slave %d: Not responding.\n", i)
+		} else {
+			log.Printf("INFO: Slave %d: Syncronized.\n", i)
+		}
 
-	log.Println("Slaves synchronized", master.slavesInfo.ReadStatus())
+	}
 
-	for i, address := range master.slaveAddresses {
+	for i, ip := range master.slaveIps {
 		if !master.slavesInfo.ReadStatustByIndex(i) {
-			go func(slaveId int, address string) {
+			go func(slaveId int, ip string) {
 				for {
-					err := master.handleSlaveSync(slaveId, address)
+					err := master.handleSlaveSync(slaveId, ip)
 					if err != nil {
 						log.Println(err)
 						time.Sleep(time.Second * 60)
@@ -176,13 +169,13 @@ func (master *Master) handleSyncronization() {
 					}
 					break
 				}
-			}(i, address)
+			}(i, ip)
 		}
 	}
 }
 
-func (master *Master) handleSlaveSync(slaveId int, address string) error {
-	conn, err := net.Dial("tcp", address)
+func (master *Master) handleSlaveSync(slaveId int, ip string) error {
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", ip, syncutils.SyncronizationPort))
 	if err != nil {
 		master.slavesInfo.WriteStatusByIndex(false, slaveId)
 		return fmt.Errorf("syncError: Slave %d connection error: %v", slaveId, err)
@@ -204,8 +197,8 @@ func (master *Master) handleSlaveSync(slaveId int, address string) error {
 
 func (master *Master) sendSyncRequest(conn *net.Conn) error {
 	request := syncutils.MasterSyncRequest{
-		MasterAddress: master.masterAddress,
-		ModelConfig:   master.modelConfig,
+		MasterIp:    master.ip,
+		ModelConfig: master.modelConfig,
 	}
 	err := syncutils.SendObjectAsJsonMessage(&request, conn)
 	if err != nil {
@@ -229,9 +222,7 @@ func (master *Master) loadConfig(filename string) error {
 		return fmt.Errorf("loadConfig: Error loading config file: %v", err)
 	}
 
-	master.serviceAddress = config.ServiceAddress
-	master.masterAddress = config.MasterAddress
-	master.slaveAddresses = config.SlaveAddress
+	master.slaveIps = config.SlaveIps
 	master.movieTitles = config.MovieTitles
 	master.modelConfig = config.ModelConfig
 
@@ -244,7 +235,7 @@ func (master *Master) Init() error {
 		return fmt.Errorf("initError: Error loading config: %v", err)
 	}
 
-	numSlaves := len(master.slaveAddresses)
+	numSlaves := len(master.slaveIps)
 	master.slavesInfo.Counts = make([]int, numSlaves)
 	master.slavesInfo.Status = make([]bool, numSlaves)
 
@@ -252,15 +243,7 @@ func (master *Master) Init() error {
 }
 
 func (master *Master) Run() error {
-	log.Println("Master running")
-	var err error
-	master.syncLstn, err = net.Listen("tcp", master.masterAddress)
-	if err != nil {
-		return fmt.Errorf("initError: Error setting local listener: %v", err)
-	}
-	defer master.syncLstn.Close()
-
-	log.Println("Master running")
+	log.Println("INFO: Master running")
 	master.handleSyncronization()
 	master.handleService()
 
@@ -268,21 +251,19 @@ func (master *Master) Run() error {
 }
 
 func (master *Master) handleService() {
-	var err error
-	for {
-		master.serviceLstn, err = net.Listen("tcp", master.serviceAddress)
-		if err != nil {
-			log.Println("serviceError: Error setting service listener:", err)
-			time.Sleep(time.Second * 5)
-			continue
-		}
-		break
+	log.Println("INFO: Start service")
+	defer log.Println("INFO: End service")
+	serviceLstn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", master.ip, syncutils.ServicePort))
+	if err != nil {
+		log.Println("ERROR: serviceError: Error setting service listener:", err)
+		return
 	}
-	defer master.serviceLstn.Close()
+	defer serviceLstn.Close()
+
 	for {
-		conn, err := master.serviceLstn.Accept()
+		conn, err := serviceLstn.Accept()
 		if err != nil {
-			fmt.Println("serviceError: Error accepting connection:", err)
+			log.Println("ERROR: serviceError: Error accepting connection:", err)
 		}
 		go master.handleRecommendation(&conn)
 	}
@@ -385,7 +366,7 @@ func (master *Master) handleRecommendationRequestBatch(batchId int, batch *syncu
 	for {
 		for {
 			fmt.Println("SlaveId", slaveId)
-			conn, err = net.Dial("tcp", master.slaveAddresses[slaveId])
+			conn, err = net.Dial("tcp", fmt.Sprintf("%s:%d", master.slaveIps[slaveId], syncutils.RecommendationPort))
 			if err != nil {
 				master.slavesInfo.WriteStatusByIndex(false, slaveId)
 				log.Printf("RequestBatchErr: Error connecting to slave node %d for batch %d: %v", slaveId, batchId, err)

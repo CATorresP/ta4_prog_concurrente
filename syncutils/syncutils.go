@@ -7,11 +7,18 @@ import (
 	"net"
 	"os"
 	"recommendation-service/model"
+	"strings"
+)
+
+const (
+	ServicePort        = 9000
+	SyncronizationPort = 9001
+	RecommendationPort = 9002
 )
 
 type MasterSyncRequest struct {
-	MasterAddress string            `json:"address"`
-	ModelConfig   model.ModelConfig `json:"modelConfig"`
+	MasterIp    string            `json:"masterIp"`
+	ModelConfig model.ModelConfig `json:"modelConfig"`
 }
 
 type SlaveSyncResponse struct {
@@ -97,4 +104,23 @@ func LoadJsonFile(filename string, object interface{}) error {
 		return fmt.Errorf("jsonLoad: Error decoding json file: %v", err)
 	}
 	return nil
+}
+
+func GetOwnIp() string {
+	interfaces, _ := net.Interfaces()
+	for _, iInterface := range interfaces {
+		if strings.HasPrefix(iInterface.Name, "eth0") {
+			addresses, _ := iInterface.Addrs()
+			for _, addr := range addresses {
+				switch expression := addr.(type) {
+				case *net.IPNet:
+					ipv4 := expression.IP.To4()
+					if ipv4 != nil {
+						return ipv4.String()
+					}
+				}
+			}
+		}
+	}
+	return "127.0.0.1"
 }
