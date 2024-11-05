@@ -202,7 +202,7 @@ func (master *Master) sendSyncRequest(conn *net.Conn) error {
 		MasterIp:    master.ip,
 		ModelConfig: master.modelConfig,
 	}
-	request.ModelConfig.P = nil
+	// TEST request.ModelConfig.P = nil
 
 	err := syncutils.SendObjectAsJsonMessage(&request, conn)
 	if err != nil {
@@ -231,6 +231,20 @@ func (master *Master) loadConfig(filename string) error {
 	master.movieGenreNames = config.MovieGenreNames
 	master.movieGenreIds = config.MovieGenreIds
 	master.modelConfig = config.ModelConfig
+
+	log.Println("Master config loaded")
+	log.Println("Slaves:", master.slaveIps)
+	log.Println("Movies:", len(master.movieTitles))
+	log.Println("Genres:", len(master.movieGenreNames))
+	log.Println("MovieGenreIds:", len(master.movieGenreIds))
+	log.Println("-ModelConfig-")
+	log.Println("NumFeatures:", master.modelConfig.NumFeatures)
+	log.Println("Epochs:", master.modelConfig.Epochs)
+	log.Println("LearningRate:", master.modelConfig.LearningRate)
+	log.Println("Regularization:", master.modelConfig.Regularization)
+	log.Println("R:", len(master.modelConfig.R), "x", len(master.modelConfig.R[0]))
+	log.Println("P:", len(master.modelConfig.P), "x", len(master.modelConfig.P[0]))
+	log.Println("Q:", len(master.modelConfig.Q), "x", len(master.modelConfig.Q[0]))
 
 	return nil
 }
@@ -266,6 +280,7 @@ func (master *Master) handleService() {
 	}
 	defer serviceLstn.Close()
 
+	log.Printf("INFO: Service listening on %s:%d\n", master.ip, syncutils.ServicePort)
 	for {
 		conn, err := serviceLstn.Accept()
 		if err != nil {
@@ -301,12 +316,15 @@ func (master *Master) handleRecommendation(conn *net.Conn) {
 
 	response.UserId = request.UserId
 	response.Recommendations = make([]syncutils.Recommendation, len(predictions))
+
 	for i, prediction := range predictions {
 		response.Recommendations[i].Id = prediction.MovieId
 		response.Recommendations[i].Title = master.movieTitles[prediction.MovieId]
 		response.Recommendations[i].Rating = prediction.Rating
-		response.Recommendations[i].Genres = make([]string, len(master.movieGenreIds[prediction.MovieId]))
-		for j, genreId := range master.movieGenreIds[prediction.MovieId] {
+		response.Recommendations[i].Genres = []string{}
+		movieGenreIds := master.movieGenreIds[prediction.MovieId]
+		response.Recommendations[i].Genres = make([]string, len(movieGenreIds))
+		for j, genreId := range movieGenreIds {
 			response.Recommendations[i].Genres[j] = master.movieGenreNames[genreId]
 		}
 		response.Recommendations[i].Comment = getComment(prediction.Rating, max, min, mean)

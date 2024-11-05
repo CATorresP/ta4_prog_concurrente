@@ -14,10 +14,10 @@ func displayRecommendations(response *syncutils.MasterRecResponse) {
 		fmt.Println("No se encontrarón recomendaciones que cumplieran con las categorías indicadas entre nuestras películas disponibles.")
 		return
 	}
-	fmt.Printf("Se encontraron las siguiente %d películas.", len(response.Recommendations))
+	fmt.Printf("Se encontraron las siguiente %d películas.\n", len(response.Recommendations))
 	fmt.Println("------------------------------------")
 	for _, rec := range response.Recommendations {
-		fmt.Printf("%s\n[%v]\nSe recomendo la película por tener un rating estimado de %f\n", rec.Title, rec.Genres, rec.Rating)
+		fmt.Printf("%s\n%v\nSe recomendo la película por tener un rating estimado de %f\n%s.\n", rec.Title, rec.Genres, rec.Rating, rec.Comment)
 		fmt.Println("------------------------------------")
 	}
 }
@@ -28,8 +28,8 @@ func main() {
 		Quantity: 10,
 		GenreIds: []int{},
 	}
-	ip := syncutils.GetOwnIp()
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", ip, syncutils.SyncronizationPort))
+
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", "172.18.0.6", syncutils.ServicePort))
 	if err != nil {
 		panic(err)
 	}

@@ -90,10 +90,13 @@ func NewModel(numFeatures, epochs int, learningRate, regularization float64, R [
 
 func LoadModel(modelConfig *ModelConfig) Model {
 	return Model{
-		R:           modelConfig.R,
-		P:           modelConfig.P,
-		Q:           modelConfig.Q,
-		numFeatures: len(modelConfig.P[0]),
+		numFeatures:    modelConfig.NumFeatures,
+		epochs:         modelConfig.Epochs,
+		learningRate:   modelConfig.LearningRate,
+		regularization: modelConfig.Regularization,
+		R:              modelConfig.R,
+		P:              modelConfig.P,
+		Q:              modelConfig.Q,
 	}
 }
 
@@ -259,4 +262,28 @@ func findMostSimilarUser(newUserRatings map[int]float64, model *Model) int {
 		}
 	}
 	return mostSimilarUser
+}
+
+func (model *Model) updateUserFactors(ratings []float64, userP *[]float64) [][]float64 {
+	grads := make([][]float64, len(ratings))
+
+	for epoch := 0; epoch < model.epochs; epoch++ {
+		epochGrads := make([]float64, model.numFeatures) // Gradientes para cada época
+		for itemId := range ratings {
+			if ratings[itemId] != 0 {
+				pred := 0.0
+				for k := 0; k < model.numFeatures; k++ {
+					pred += (*userP)[k] * model.Q[itemId][k]
+				}
+				err := ratings[itemId] - pred
+				for k := 0; k < model.numFeatures; k++ {
+					userGrad := model.learningRate * (err*model.Q[itemId][k] - model.regularization*(*userP)[k])
+					(*userP)[k] += userGrad
+					epochGrads[k] += userGrad
+				}
+			}
+		}
+		grads = append(grads, epochGrads)
+	}
+	return grads
 }

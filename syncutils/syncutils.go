@@ -18,7 +18,7 @@ const (
 
 type MasterSyncRequest struct {
 	MasterIp      string            `json:"masterIp"`
-	MovieGenreIds [][]string        `json:"movieGenreIds"`
+	MovieGenreIds [][]int           `json:"movieGenreIds"`
 	ModelConfig   model.ModelConfig `json:"modelConfig"`
 }
 
@@ -57,8 +57,8 @@ type Recommendation struct {
 type SlaveRecResponse struct {
 	Predictions []Prediction `json:"predictions"`
 	Sum         float64      `json:"sum"`
-	Min         float64      `json:"min"`
 	Max         float64      `json:"max"`
+	Min         float64      `json:"min"`
 	Count       int          `json:"count"`
 }
 

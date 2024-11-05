@@ -65,13 +65,32 @@ func (slave *Slave) handleSyncRequest(conn *net.Conn) error {
 	slave.receiveSyncRequest(conn, &syncRequest)
 
 	slave.masterIp = syncRequest.MasterIp
+	slave.movieGenreIds = syncRequest.MovieGenreIds
 	slave.model = model.LoadModel(&syncRequest.ModelConfig)
+
 	log.Println("IP: ", slave.ip)
 	log.Println("Master IP: ", slave.masterIp)
-	log.Println("Model loaded")
-	log.Println("R: ", len(slave.model.R), ", ", len(slave.model.R[0]))
-	log.Println("P: ", len(slave.model.P), ", ", len(slave.model.P[0]))
-	log.Println("Q: ", len(slave.model.Q), ", ", len(slave.model.Q[0]))
+	log.Println("Model Syncronized")
+	if len(syncRequest.MovieGenreIds) > 0 {
+		log.Println("Movie genres loaded: ", len(syncRequest.MovieGenreIds))
+	} else {
+		log.Println("No movie genres loaded")
+	}
+	if len(slave.model.R) > 0 {
+		log.Println("R: ", len(slave.model.R), ", ", len(slave.model.R[0]))
+	} else {
+		log.Println("R: ", len(slave.model.R), ", ", 0)
+	}
+	if len(slave.model.P) > 0 {
+		log.Println("P: ", len(slave.model.P), ", ", len(slave.model.P[0]))
+	} else {
+		log.Println("P: ", len(slave.model.P), ", ", 0)
+	}
+	if len(slave.model.Q) > 0 {
+		log.Println("Q: ", len(slave.model.Q), ", ", len(slave.model.Q[0]))
+	} else {
+		log.Println("Q: ", len(slave.model.Q), ", ", 0)
+	}
 	log.Println("test: ", slave.model.Predict(1, 1))
 	return slave.repondSyncRequest(conn)
 }
@@ -124,6 +143,7 @@ func (slave *Slave) handleRecommendation(conn *net.Conn) {
 		return
 	}
 	log.Println("INFO: Recommendation request received")
+	log.Println("TEST: Sending response: ", request)
 
 	var response syncutils.SlaveRecResponse
 	err = slave.processRecommendation(&response, &request)
@@ -132,6 +152,8 @@ func (slave *Slave) handleRecommendation(conn *net.Conn) {
 		return
 	}
 	log.Println("INFO: Recommendations obtained")
+
+	log.Println("TEST: Sending response: ", response)
 
 	err = respondRecRequest(&response, conn)
 	if err != nil {
