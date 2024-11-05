@@ -14,8 +14,11 @@ services:
     command: tail -f /dev/null
     ports: 
       - 9000:9000
+    depends_on:
+      - master
     networks:
-      - distnet
+      distnet:
+        ipv4_address: 172.21.0.2
 
   master:
     image: golang:latest
@@ -28,9 +31,10 @@ services:
       - ./go.mod:/go/src/app/go.mod
       - ./model:/go/src/app/model
     working_dir: /go/src/app
-    command: tail -f /dev/null
+    command: go run server.go
     networks:
-      - distnet
+      distnet:
+        ipv4_address: 172.21.0.3
     depends_on:
       - slave1
       - slave2
@@ -46,9 +50,10 @@ services:
       - ./go.mod:/go/src/app/go.mod
       - ./model:/go/src/app/model
     working_dir: /go/src/app
-    command: tail -f /dev/null
+    command: go run client.go
     networks:
-      - distnet
+      distnet:
+        ipv4_address: 172.21.0.4
   slave2:
     image: golang:latest
     container_name: slave2
@@ -59,9 +64,10 @@ services:
       - ./go.mod:/go/src/app/go.mod
       - ./model:/go/src/app/model
     working_dir: /go/src/app
-    command: tail -f /dev/null
+    command: go run client.go
     networks:
-      - distnet
+      distnet:
+        ipv4_address: 172.21.0.5
   slave3:
     image: golang:latest
     container_name: slave3
@@ -72,10 +78,16 @@ services:
       - ./go.mod:/go/src/app/go.mod
       - ./model:/go/src/app/model
     working_dir: /go/src/app
-    command: tail -f /dev/null
+    command: go run client.go
     networks:
-      - distnet
+      distnet:
+        ipv4_address: 172.21.0.6
 
 networks:
     distnet:
         driver: bridge
+        ipam:
+            driver: default
+            config:
+                - subnet: 172.21.0.0/16
+

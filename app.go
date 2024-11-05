@@ -29,7 +29,7 @@ func main() {
 		GenreIds: []int{0},
 	}
 
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", "172.18.0.6", syncutils.ServicePort))
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", "172.21.0.3", syncutils.ServicePort))
 	if err != nil {
 		panic(err)
 	}
