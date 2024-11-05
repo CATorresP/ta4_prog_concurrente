@@ -236,54 +236,67 @@ func SearchGrid(grid ModelGrid, R [][]float64) Model {
 
 //Pendiente uso como opcion para usuarios no registrados o procesados
 
-func cosineSimilarity(vec1, vec2 []float64) float64 {
-	var dotProduct, normA, normB float64
-	for i := range vec1 {
-		dotProduct += vec1[i] * vec2[i]
-		normA += vec1[i] * vec2[i]
-		normB += vec2[i] * vec2[i]
-	}
-	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
-}
-
-func findMostSimilarUser(newUserRatings map[int]float64, model *Model) int {
-	maxSimilarity := -1.0
-	mostSimilarUser := -1
-
-	for u := range model.P {
-		existingUserRatings := make([]float64, len(newUserRatings))
-		for i := range newUserRatings {
-			existingUserRatings[i] = model.R[u][i]
+/*
+	func cosineSimilarity(vec1, vec2 []float64) float64 {
+		var dotProduct, normA, normB float64
+		for i := range vec1 {
+			dotProduct += vec1[i] * vec2[i]
+			normA += vec1[i] * vec2[i]
+			normB += vec2[i] * vec2[i]
 		}
-		similarity := cosineSimilarity(existingUserRatings, model.R[u])
-		if similarity > maxSimilarity {
-			maxSimilarity = similarity
-			mostSimilarUser = u
-		}
+		return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 	}
-	return mostSimilarUser
-}
 
-func (model *Model) updateUserFactors(ratings []float64, userP *[]float64) [][]float64 {
-	grads := make([][]float64, len(ratings))
+	func findMostSimilarUser(newUserRatings map[int]float64, model *Model) int {
+		maxSimilarity := -1.0
+		mostSimilarUser := -1
 
+		for u := range model.P {
+			existingUserRatings := make([]float64, len(newUserRatings))
+			for i := range newUserRatings {
+				existingUserRatings[i] = model.R[u][i]
+			}
+			similarity := cosineSimilarity(existingUserRatings, model.R[u])
+			if similarity > maxSimilarity {
+				maxSimilarity = similarity
+				mostSimilarUser = u
+			}
+		}
+		return mostSimilarUser
+	}
+*/
+func (model *Model) UpdateUserFactors(ratings []float64, userFactors *[]float64, startItemId, endItemId int) []float64 {
+	weightedGrad := make([]float64, model.numFeatures)
+	n := endItemId - startItemId
 	for epoch := 0; epoch < model.epochs; epoch++ {
-		epochGrads := make([]float64, model.numFeatures) // Gradientes para cada época
-		for itemId := range ratings {
-			if ratings[itemId] != 0 {
+		for i := 0; i < n; i++ {
+			itemId := startItemId + i
+			if ratings[i] != 0 {
 				pred := 0.0
 				for k := 0; k < model.numFeatures; k++ {
-					pred += (*userP)[k] * model.Q[itemId][k]
+					pred += (*userFactors)[k] * model.Q[itemId][k]
 				}
-				err := ratings[itemId] - pred
+				err := ratings[i] - pred
 				for k := 0; k < model.numFeatures; k++ {
-					userGrad := model.learningRate * (err*model.Q[itemId][k] - model.regularization*(*userP)[k])
-					(*userP)[k] += userGrad
-					epochGrads[k] += userGrad
+					userGrad := model.learningRate * (err*model.Q[itemId][k] - model.regularization*(*userFactors)[k])
+					(*userFactors)[k] += userGrad
+					weightedGrad[k] += userGrad
 				}
 			}
 		}
-		grads = append(grads, epochGrads)
 	}
-	return grads
+
+	w := (float64(endItemId) - float64(startItemId)) / float64(len(model.Q))
+	for k := 0; k < model.numFeatures; k++ {
+		weightedGrad[k] *= w
+	}
+	return weightedGrad
+}
+
+func (model *Model) PredictUser(userFactors []float64, itemId int) float64 {
+	prediction := 0.0
+	for k := 0; k < model.numFeatures; k++ {
+		prediction += userFactors[k] * model.Q[itemId][k]
+	}
+	return prediction
 }

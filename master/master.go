@@ -3,6 +3,7 @@ package master
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
 	"recommendation-service/model"
 	"recommendation-service/syncutils"
@@ -183,6 +184,10 @@ func (master *Master) handleSlaveSync(slaveId int, ip string) error {
 		return fmt.Errorf("syncError: Slave %d connection error: %v", slaveId, err)
 	}
 	defer conn.Close()
+
+	timeout := 20 * time.Second
+	conn.SetDeadline(time.Now().Add(timeout))
+
 	err = master.sendSyncRequest(&conn)
 	if err != nil {
 		master.slavesInfo.WriteStatusByIndex(false, slaveId)
@@ -193,16 +198,18 @@ func (master *Master) handleSlaveSync(slaveId int, ip string) error {
 	if response.Status == 0 {
 		master.slavesInfo.WriteStatusByIndex(true, slaveId)
 	}
-	log.Println("Slave", slaveId, "synchronized")
+	log.Println("INFO: Slave", slaveId, "synchronized")
 	return nil
 }
 
 func (master *Master) sendSyncRequest(conn *net.Conn) error {
 	request := syncutils.MasterSyncRequest{
-		MasterIp:    master.ip,
-		ModelConfig: master.modelConfig,
+		MasterIp:      master.ip,
+		MovieGenreIds: master.movieGenreIds,
+		ModelConfig:   master.modelConfig,
 	}
-	// TEST request.ModelConfig.P = nil
+	request.ModelConfig.R = nil
+	request.ModelConfig.P = nil
 
 	err := syncutils.SendObjectAsJsonMessage(&request, conn)
 	if err != nil {
@@ -286,6 +293,8 @@ func (master *Master) handleService() {
 		if err != nil {
 			log.Println("ERROR: serviceError: Error accepting connection:", err)
 		}
+		timeout := 20 * time.Second
+		conn.SetDeadline(time.Now().Add(timeout))
 		go master.handleRecommendation(&conn)
 	}
 }
@@ -357,9 +366,10 @@ func receiveRecommendationRequest(conn *net.Conn, request *syncutils.ClientRecRe
 }
 
 func (master *Master) handleModelRecommendation(predictions *[]syncutils.Prediction, sum, max, min *float64, count *int, request *syncutils.ClientRecRequest) error {
+	log.Println("INFO: Handling recommendation request.")
+	defer log.Println("INFO: RecommendationHandled.")
 	beginStatus := master.slavesInfo.ReadStatus()
-	log.Println("Start handling recommendation request. Begin status:", beginStatus)
-	defer log.Println("End handling recommendation request.")
+	log.Printf("INFO: Slaves status: %v", beginStatus)
 
 	nBatches := 0
 	for _, active := range beginStatus {
@@ -370,94 +380,135 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 	if nBatches == 0 {
 		return fmt.Errorf("RecRequestErr: No active slaves")
 	}
-	log.Println("Number of batches:", nBatches)
-	batches := master.createBatches(nBatches, request.UserId, request.Quantity, request.GenreIds)
-	log.Println("Batches created:", batches)
-	ch := make(chan *syncutils.SlaveRecResponse, nBatches)
+	log.Printf("INFO: Created (%d) batches:", nBatches)
+
+	cond := sync.NewCond(&sync.Mutex{})
+	partialUserFactorsCh := make(chan *syncutils.SlavePartialUserFactors, nBatches)
+	partialRecommendationCh := make(chan *syncutils.SlaveRecResponse, nBatches)
+	masterUserFactors := syncutils.MasterUserFactors{
+		UserId:      request.UserId,
+		UserFactors: initializeUserFactors(master.modelConfig.NumFeatures),
+	}
+
+	batches := master.createBatches(nBatches, request.UserId, request.Quantity, request.GenreIds, masterUserFactors.UserFactors)
+
 	activeSlaveIds := master.slavesInfo.GetActiveIdsByStatus(true)
 
 	go func() {
-		var wg sync.WaitGroup
 		for batchId, batch := range batches {
-			wg.Add(1)
 			go func(batchId int) {
-				defer wg.Done()
 				var slaveId int
 				if batchId < len(activeSlaveIds) {
 					slaveId = activeSlaveIds[batchId]
 				} else {
 					slaveId = master.slavesInfo.GetMinCountIdByStatus(true)
 				}
-				err := master.handleRecommendationRequestBatch(batchId, &batch, slaveId, ch)
-				if err != nil {
-					log.Println(err)
-				}
+				master.handleRecommendationRequestBatch(cond, partialUserFactorsCh, partialRecommendationCh, batchId, slaveId, &batch, &masterUserFactors)
 			}(batchId)
 		}
-		wg.Wait()
-		close(ch)
 	}()
 
-	var tempPredictions []syncutils.Prediction
-	for partialResponse := range ch {
-		tempPredictions = append(tempPredictions, partialResponse.Predictions...)
-		*sum += partialResponse.Sum
-		*count += partialResponse.Count
-		if partialResponse.Max > *max {
-			*max = partialResponse.Max
-		}
-		if partialResponse.Min < *min {
-			*min = partialResponse.Min
-		}
-		if len(tempPredictions) > request.Quantity {
-			sort.Slice(tempPredictions, func(i, j int) bool {
-				return tempPredictions[i].Rating > tempPredictions[j].Rating
-			})
-			tempPredictions = tempPredictions[:request.Quantity]
+	userFactorsGrads := make([]float64, master.modelConfig.NumFeatures)
+	for i := 0; i < nBatches; i++ {
+		partialUserFactors := <-partialUserFactorsCh
+		for j, weightedGrad := range partialUserFactors.WeightedGrad {
+			userFactorsGrads[j] += weightedGrad
 		}
 	}
-	*predictions = tempPredictions
+	masterUserFactors.UserId = request.UserId
+	masterUserFactors.UserFactors = userFactorsGrads
+
+	cond.L.Lock()
+	cond.Broadcast()
+	cond.L.Unlock()
+
+	for i := 0; i < nBatches; i++ {
+		partialRecommendation := <-partialRecommendationCh
+		*predictions = append(*predictions, partialRecommendation.Predictions...)
+		*sum += partialRecommendation.Sum
+		*count += partialRecommendation.Count
+		if partialRecommendation.Max > *max {
+			*max = partialRecommendation.Max
+		}
+		if partialRecommendation.Min < *min {
+			*min = partialRecommendation.Min
+		}
+		if len(*predictions) > request.Quantity {
+			sort.Slice(*predictions, func(i, j int) bool {
+				return (*predictions)[i].Rating > (*predictions)[j].Rating
+			})
+			*predictions = (*predictions)[:request.Quantity]
+		}
+	}
+
 	return nil
 }
 
-func (master *Master) handleRecommendationRequestBatch(batchId int, batch *syncutils.MasterRecRequest, slaveId int, ch chan *syncutils.SlaveRecResponse) error {
+func (master *Master) handleRecommendationRequestBatch(cond *sync.Cond, partialUserFactorsCh chan *syncutils.SlavePartialUserFactors, partialRecommendationCh chan *syncutils.SlaveRecResponse, batchId, slaveId int, batch *syncutils.MasterRecRequest, masterUserFactors *syncutils.MasterUserFactors) {
 	var err error
 	var conn net.Conn
-	var response syncutils.SlaveRecResponse
 	log.Printf("INFO: RequestBatch: Handling batch (%d).\n", batchId)
 	defer log.Printf("INFO: RequestBatch: Batch (%d) handled.\n", batchId)
 	for {
-		for {
-			fmt.Println("SlaveId", slaveId)
-			conn, err = net.Dial("tcp", fmt.Sprintf("%s:%d", master.slaveIps[slaveId], syncutils.RecommendationPort))
-			if err != nil {
-				master.slavesInfo.WriteStatusByIndex(false, slaveId)
-				log.Printf("RequestBatchErr: Error connecting to slave node %d for batch %d: %v", slaveId, batchId, err)
-				log.Printf("Status: %v", master.slavesInfo.ReadStatus())
-				slaveId = master.slavesInfo.GetMinCountIdByStatus(true)
-				continue
-			}
-			err = syncutils.SendObjectAsJsonMessage(batch, &conn)
-			if err != nil {
-				master.slavesInfo.WriteStatusByIndex(false, slaveId)
-				log.Printf("RequestBatchErr: Error sending batch to slave node %d for batch %d: %v", slaveId, batchId, err)
-				slaveId = master.slavesInfo.GetMinCountIdByStatus(true)
-				continue
-			}
-			break
-		}
-		err = syncutils.ReceiveJsonMessageAsObject(&response, &conn)
+		log.Printf("INFO: Trying to connect batch to slaveId (%d)\n", slaveId)
+		conn, err = net.Dial("tcp", fmt.Sprintf("%s:%d", master.slaveIps[slaveId], syncutils.RecommendationPort))
 		if err != nil {
 			master.slavesInfo.WriteStatusByIndex(false, slaveId)
-			log.Printf("RequestBatchErr: Error receiving response from slave node (%d): %v", slaveId, err)
+			log.Printf("ERROR: RequestBatchErr: Error connecting to slave node %d for batch %d: %v", slaveId, batchId, err)
+			log.Printf("Slaves status: %v", master.slavesInfo.ReadStatus())
+			slaveId = master.slavesInfo.GetMinCountIdByStatus(true)
+			continue
 		}
-		ch <- &response
-		log.Printf("INFO: RequestBatch: Response received from slave node (%d).", slaveId)
+		timeout := 20 * time.Second
+		conn.SetDeadline(time.Now().Add(timeout))
+
+		err = master.handlePartialRecommendation(&conn, cond, partialUserFactorsCh, partialRecommendationCh, slaveId, batchId, batch, masterUserFactors)
+		if err != nil {
+			log.Println("ERROR: RequestBatchErr: ", err)
+			master.slavesInfo.WriteStatusByIndex(false, slaveId)
+			slaveId = master.slavesInfo.GetMinCountIdByStatus(true)
+			continue
+		}
 		break
 	}
+}
+
+func (master *Master) handlePartialRecommendation(conn *net.Conn, cond *sync.Cond, partialUserFactorsCh chan *syncutils.SlavePartialUserFactors, partialRecommendationCh chan *syncutils.SlaveRecResponse, slaveId, batchId int, batch *syncutils.MasterRecRequest, masterUserFactors *syncutils.MasterUserFactors) error {
+	// sendRequest
+	err := syncutils.SendObjectAsJsonMessage(batch, conn)
+	if err != nil {
+		return fmt.Errorf("partialRecommendErr: Error sending batch to slave node (%d) for batch (%d): %v", slaveId, batchId, err)
+	}
+	// ReceivePartialUserFactors
+	var partialUserFactors syncutils.SlavePartialUserFactors
+	err = syncutils.ReceiveJsonMessageAsObject(&partialUserFactors, conn)
+	if err != nil {
+		return fmt.Errorf("partialRecommendErr: Error receiving partial user factors from slave node (%d): %v", slaveId, err)
+	}
+
+	partialUserFactorsCh <- &partialUserFactors
+
+	cond.L.Lock()
+	cond.Wait()
+	cond.L.Unlock()
+
+	// SendUserFactors
+	err = syncutils.SendObjectAsJsonMessage(masterUserFactors, conn)
+	if err != nil {
+		return fmt.Errorf("partialRecommendErr: Error sending user factors to slave node (%d): %v", slaveId, err)
+	}
+
+	// ReceivePartialRecommendation
+	var response syncutils.SlaveRecResponse
+	err = syncutils.ReceiveJsonMessageAsObject(&response, conn)
+	if err != nil {
+		return fmt.Errorf("partialRecommendErr: Error receiving response from slave node (%d): %v", slaveId, err)
+	}
+	partialRecommendationCh <- &response
 	return nil
 }
-func (master *Master) createBatches(nBatches, userId int, quantity int, genreIds []int) []syncutils.MasterRecRequest {
+
+func (master *Master) createBatches(nBatches, userId int, quantity int, genreIds []int, userFactors []float64) []syncutils.MasterRecRequest {
 	batches := make([]syncutils.MasterRecRequest, nBatches)
 	var rangeSize int = len(master.movieTitles) / nBatches
 	var startMovieId int = 0
@@ -468,10 +519,12 @@ func (master *Master) createBatches(nBatches, userId int, quantity int, genreIds
 		}
 		batches[i] = syncutils.MasterRecRequest{
 			UserId:       userId,
+			UserRatings:  master.modelConfig.R[userId][startMovieId:endMovieId],
 			StartMovieId: startMovieId,
 			EndMovieId:   endMovieId,
 			Quantity:     quantity,
 			GenreIds:     genreIds,
+			UserFactors:  userFactors,
 		}
 		startMovieId = endMovieId
 	}
@@ -484,4 +537,37 @@ func sendRecommendationResponse(conn *net.Conn, response *syncutils.MasterRecRes
 		return fmt.Errorf("sendRecResponseErr: Error sending response object as json: %v", err)
 	}
 	return nil
+}
+
+func initializeUserFactors(numFeatures int) []float64 {
+	userFactors := make([]float64, numFeatures)
+
+	for i := 0; i < numFeatures; i++ {
+		userFactors[i] = rand.Float64()*0.02 - 0.01 // Valores en el rango [-0.01, 0.01]
+	}
+
+	return userFactors
+}
+
+func FedAvg(gradients [][]float64, weights []float64) []float64 {
+	numFeatures := len(gradients[0]) // Asumimos que todos los vectores tienen la misma longitud
+
+	avgGrad := make([]float64, numFeatures)
+
+	for i := 0; i < numFeatures; i++ {
+		for j, grad := range gradients {
+			avgGrad[i] += grad[i] * weights[j] // Pondera cada gradiente
+		}
+	}
+
+	sumWeights := 0.0
+	for _, w := range weights {
+		sumWeights += w
+	}
+
+	for i := range avgGrad {
+		avgGrad[i] /= sumWeights
+	}
+
+	return avgGrad // Retorna el gradiente promedio para actualizar el modelo global
 }

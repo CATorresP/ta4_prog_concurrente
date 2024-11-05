@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"recommendation-service/model"
@@ -34,24 +35,23 @@ type ClientRecRequest struct {
 }
 
 type MasterRecRequest struct {
-	UserId       int   `json:"userId"`
-	StartMovieId int   `json:"startMovieId"`
-	EndMovieId   int   `json:"endMovieId"`
-	Quantity     int   `json:"quantity"`
-	GenreIds     []int `json:"genreIds"`
+	UserId       int       `json:"userId"`
+	UserRatings  []float64 `json:"userRatings"`
+	StartMovieId int       `json:"startMovieId"`
+	EndMovieId   int       `json:"endMovieId"`
+	Quantity     int       `json:"quantity"`
+	GenreIds     []int     `json:"genreIds"`
+	UserFactors  []float64 `json:"userFactors"`
 }
 
-type MasterRecResponse struct {
-	UserId          int              `json:"userId"`
-	Recommendations []Recommendation `json:"recommendations"`
+type SlavePartialUserFactors struct {
+	UserId       int       `json:"userId"`
+	WeightedGrad []float64 `json:"userFactors"`
 }
 
-type Recommendation struct {
-	Id      int      `json:"id"`
-	Title   string   `json:"title"`
-	Genres  []string `json:"genres"`
-	Rating  float64  `json:"rating"`
-	Comment string   `json:"comment"`
+type MasterUserFactors struct {
+	UserId      int       `json:"userId"`
+	UserFactors []float64 `json:"userLatentFactors"`
 }
 
 type SlaveRecResponse struct {
@@ -65,6 +65,19 @@ type SlaveRecResponse struct {
 type Prediction struct {
 	MovieId int     `json:"movieId"`
 	Rating  float64 `json:"rating"`
+}
+
+type MasterRecResponse struct {
+	UserId          int              `json:"userId"`
+	Recommendations []Recommendation `json:"recommendations"`
+}
+
+type Recommendation struct {
+	Id      int      `json:"id"`
+	Title   string   `json:"title"`
+	Genres  []string `json:"genres"`
+	Rating  float64  `json:"rating"`
+	Comment string   `json:"comment"`
 }
 
 func ReceiveJsonMessageAsObject(object any, conn *net.Conn) error {
@@ -132,4 +145,11 @@ func GetOwnIp() string {
 		}
 	}
 	return "127.0.0.1"
+}
+
+func logError(prefix string, err error) {
+	log.Printf("ERROR: %s: %v", prefix, err)
+}
+func logInfo(prefix string, err error) {
+	log.Printf("INFO: %s: %v", prefix, err)
 }

@@ -8,6 +8,7 @@ import (
 	"recommendation-service/model"
 	"recommendation-service/syncutils"
 	"sort"
+	"time"
 )
 
 type Slave struct {
@@ -32,7 +33,7 @@ func (slave *Slave) Run() {
 // Proceso de sincronización
 func (slave *Slave) handleSynchronization() {
 	syncLstn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", slave.ip, syncutils.SyncronizationPort))
-	log.Println("Slave listening for syncronization on", fmt.Sprintf("%s:%d", slave.ip, syncutils.SyncronizationPort))
+	log.Println("INFO: Slave listening for syncronization on", fmt.Sprintf("%s:%d", slave.ip, syncutils.SyncronizationPort))
 	if err != nil {
 		log.Println("ERROR: syncErr: Error setting local listener:", err)
 		return
@@ -46,6 +47,9 @@ func (slave *Slave) handleSynchronization() {
 			log.Printf("ERROR: syncErr: Connection error: %v", err)
 			continue
 		}
+		timeout := 20 * time.Second
+		conn.SetDeadline(time.Now().Add(timeout))
+
 		err = slave.handleSyncRequest(&conn)
 		if err != nil {
 			log.Printf("ERROR: syncErr: Error handling sync request: %v", err)
@@ -91,7 +95,7 @@ func (slave *Slave) handleSyncRequest(conn *net.Conn) error {
 	} else {
 		log.Println("Q: ", len(slave.model.Q), ", ", 0)
 	}
-	log.Println("test: ", slave.model.Predict(1, 1))
+	//log.Println("test: ", slave.model.Predict(1, 1))
 	return slave.repondSyncRequest(conn)
 }
 
@@ -128,13 +132,17 @@ func (slave *Slave) handleRecommendations() {
 			log.Printf("ERROR: recError: Incoming connection error: %v", err)
 			continue
 		}
+		timeout := 20 * time.Second
+		conn.SetDeadline(time.Now().Add(timeout))
+
 		go slave.handleRecommendation(&conn)
 	}
 }
 
 func (slave *Slave) handleRecommendation(conn *net.Conn) {
 	defer (*conn).Close()
-	log.Println("INFO: Start handling recommendation")
+	log.Println("INFO: Handling recommendation")
+	defer log.Println("INFO: Recommendation handled")
 
 	var request syncutils.MasterRecRequest
 	err := receiveRecRequest(&request, conn)
@@ -143,17 +151,39 @@ func (slave *Slave) handleRecommendation(conn *net.Conn) {
 		return
 	}
 	log.Println("INFO: Recommendation request received")
-	log.Println("TEST: Sending response: ", request)
+	//log.Println("TEST: Recommendation Request", request)
+
+	var partialUserFactors syncutils.SlavePartialUserFactors
+	err = slave.calcUserFactors(&partialUserFactors, &request)
+	if err != nil {
+		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
+		return
+	}
+	//log.Println("TEST: partialUserFactors", partialUserFactors)
+
+	err = sendPartialUserFactors(&partialUserFactors, conn)
+	if err != nil {
+		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
+		return
+	}
+	log.Println("INFO: Partial user Factors sent")
+
+	var masterUserFactors syncutils.MasterUserFactors
+	err = receiveUserFactors(&masterUserFactors, conn)
+	if err != nil {
+		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
+		return
+	}
+	log.Println("INFO: User Factors received")
+	//log.Println("TEST: masterUserFactors", masterUserFactors)
 
 	var response syncutils.SlaveRecResponse
-	err = slave.processRecommendation(&response, &request)
+	err = slave.processRecommendation(&response, &request, masterUserFactors.UserFactors)
 	if err != nil {
 		log.Printf("ERROR: recHandleErr: Error handling recommendation: %v", err)
 		return
 	}
 	log.Println("INFO: Recommendations obtained")
-
-	log.Println("TEST: Sending response: ", response)
 
 	err = respondRecRequest(&response, conn)
 	if err != nil {
@@ -171,22 +201,48 @@ func receiveRecRequest(recRequest *syncutils.MasterRecRequest, conn *net.Conn) e
 	return nil
 }
 
-func (slave *Slave) processRecommendation(response *syncutils.SlaveRecResponse, request *syncutils.MasterRecRequest) error {
+func (slave *Slave) calcUserFactors(partialUserFactors *syncutils.SlavePartialUserFactors, request *syncutils.MasterRecRequest) error {
+	weightedGrad := slave.model.UpdateUserFactors(request.UserRatings, &request.UserFactors, request.StartMovieId, request.EndMovieId)
 
+	partialUserFactors.UserId = request.UserId
+	partialUserFactors.WeightedGrad = weightedGrad
+
+	return nil
+}
+
+func sendPartialUserFactors(partialUserFactors *syncutils.SlavePartialUserFactors, conn *net.Conn) error {
+	err := syncutils.SendObjectAsJsonMessage(partialUserFactors, conn)
+	if err != nil {
+		return fmt.Errorf("sendPartialUserFactorsErr: Error sending partial user factors: %v", err)
+	}
+	return nil
+}
+
+func receiveUserFactors(masterUserFactors *syncutils.MasterUserFactors, conn *net.Conn) error {
+	err := syncutils.ReceiveJsonMessageAsObject(masterUserFactors, conn)
+	if err != nil {
+		return fmt.Errorf("recReceiveUserFactorsErr: Error receiving user factors: %v", err)
+	}
+	return nil
+}
+
+func (slave *Slave) processRecommendation(response *syncutils.SlaveRecResponse, request *syncutils.MasterRecRequest, userFactors []float64) error {
 	sum := 0.0
 	max := math.Inf(-1)
 	min := math.Inf(1)
 	count := 0
 
+	n := request.EndMovieId - request.StartMovieId
 	pred := make([]syncutils.Prediction, request.EndMovieId-request.StartMovieId)
-	for movieId := request.StartMovieId; movieId < request.EndMovieId; movieId++ {
-		if slave.model.R[request.UserId][movieId] == 0 {
-			if len(request.GenreIds) > 0 {
-				if !containsAll(slave.movieGenreIds[movieId], request.GenreIds) {
-					continue
-				}
+
+	for i := 0; i < n; i++ {
+		movieId := i + request.StartMovieId
+		if request.UserRatings[i] == 0 {
+			if len(request.GenreIds) > 0 && !containsAll(slave.movieGenreIds[movieId], request.GenreIds) {
+				continue
 			}
-			rating := slave.model.Predict(request.UserId, movieId)
+
+			rating := slave.model.PredictUser(userFactors, movieId)
 			pred[count] = syncutils.Prediction{
 				MovieId: movieId,
 				Rating:  rating,

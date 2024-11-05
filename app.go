@@ -26,7 +26,7 @@ func main() {
 	request := syncutils.ClientRecRequest{
 		UserId:   4,
 		Quantity: 10,
-		GenreIds: []int{},
+		GenreIds: []int{0},
 	}
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", "172.18.0.6", syncutils.ServicePort))
