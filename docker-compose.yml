@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  api:
+    image: golang:latest
+    container_name: api
+    volumes:
+      - ./syncutils:/go/src/app/syncutils
+      - ./config:/go/src/app/config
+      - ./app.go:/go/src/app/app.go
+      - ./go.mod:/go/src/app/go.mod
+      - ./model:/go/src/app/model
+    working_dir: /go/src/app
+    command: tail -f /dev/null
+    ports: 
+      - 9000:9000
+    networks:
+      - distnet
+
+  master:
+    image: golang:latest
+    container_name: master
+    volumes:
+      - ./master:/go/src/app/master
+      - ./syncutils:/go/src/app/syncutils
+      - ./config:/go/src/app/config
+      - ./server.go:/go/src/app/server.go
+      - ./go.mod:/go/src/app/go.mod
+      - ./model:/go/src/app/model
+    working_dir: /go/src/app
+    command: tail -f /dev/null
+    networks:
+      - distnet
+    depends_on:
+      - slave1
+      - slave2
+      - slave3
+
+  slave1:
+    image: golang:latest
+    container_name: slave1
+    volumes:
+      - ./slave:/go/src/app/slave
+      - ./syncutils:/go/src/app/syncutils
+      - ./client.go:/go/src/app/client.go
+      - ./go.mod:/go/src/app/go.mod
+      - ./model:/go/src/app/model
+    working_dir: /go/src/app
+    command: tail -f /dev/null
+    networks:
+      - distnet
+  slave2:
+    image: golang:latest
+    container_name: slave2
+    volumes:
+      - ./slave:/go/src/app/slave
+      - ./syncutils:/go/src/app/syncutils
+      - ./client.go:/go/src/app/client.go
+      - ./go.mod:/go/src/app/go.mod
+      - ./model:/go/src/app/model
+    working_dir: /go/src/app
+    command: tail -f /dev/null
+    networks:
+      - distnet
+  slave3:
+    image: golang:latest
+    container_name: slave3
+    volumes:
+      - ./slave:/go/src/app/slave
+      - ./syncutils:/go/src/app/syncutils
+      - ./client.go:/go/src/app/client.go
+      - ./go.mod:/go/src/app/go.mod
+      - ./model:/go/src/app/model
+    working_dir: /go/src/app
+    command: tail -f /dev/null
+    networks:
+      - distnet
+
+networks:
+    distnet:
+        driver: bridge

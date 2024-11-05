@@ -27,7 +27,7 @@ func main() {
 		UserId:   4,
 		Quantity: 10,
 	}
-	conn, err := net.Dial("tcp", "localhost:9000")
+	conn, err := net.Dial("tcp", "172.21.0.6:9000")
 	if err != nil {
 		panic(err)
 	}
