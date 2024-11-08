@@ -424,20 +424,22 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 
 	for i := 0; i < nBatches; i++ {
 		partialRecommendation := <-partialRecommendationCh
-		*predictions = append(*predictions, partialRecommendation.Predictions...)
-		*sum += partialRecommendation.Sum
-		*count += partialRecommendation.Count
-		if partialRecommendation.Max > *max {
-			*max = partialRecommendation.Max
-		}
-		if partialRecommendation.Min < *min {
-			*min = partialRecommendation.Min
-		}
-		if len(*predictions) > request.Quantity {
-			sort.Slice(*predictions, func(i, j int) bool {
-				return (*predictions)[i].Rating > (*predictions)[j].Rating
-			})
-			*predictions = (*predictions)[:request.Quantity]
+		if partialRecommendation.Count > 0 {
+			*predictions = append(*predictions, partialRecommendation.Predictions...)
+			*sum += partialRecommendation.Sum
+			*count += partialRecommendation.Count
+			if partialRecommendation.Max > *max {
+				*max = partialRecommendation.Max
+			}
+			if partialRecommendation.Min < *min {
+				*min = partialRecommendation.Min
+			}
+			if len(*predictions) > request.Quantity {
+				sort.Slice(*predictions, func(i, j int) bool {
+					return (*predictions)[i].Rating > (*predictions)[j].Rating
+				})
+				*predictions = (*predictions)[:request.Quantity]
+			}
 		}
 	}
 

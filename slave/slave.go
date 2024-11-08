@@ -257,17 +257,27 @@ func (slave *Slave) processRecommendation(response *syncutils.SlaveRecResponse, 
 			count++
 		}
 	}
-	pred = pred[:count]
-	if count > request.Quantity {
-		sort.Slice(pred, func(i, j int) bool {
-			return pred[i].Rating > pred[j].Rating
-		})
-		response.Predictions = pred[:request.Quantity]
+	if count == 0 {
+		response.Predictions = []syncutils.Prediction{}
+		response.Sum = 0
+		response.Max = 0
+		response.Min = 0
+		response.Count = 0
+	} else {
+		pred = pred[:count]
+		if count > request.Quantity {
+			sort.Slice(pred, func(i, j int) bool {
+				return pred[i].Rating > pred[j].Rating
+			})
+			response.Predictions = pred[:request.Quantity]
+		} else {
+			response.Predictions = pred
+		}
+		response.Sum = sum
+		response.Max = max
+		response.Min = min
+		response.Count = count
 	}
-	response.Sum = sum
-	response.Max = max
-	response.Min = min
-	response.Count = count
 	return nil
 }
 
