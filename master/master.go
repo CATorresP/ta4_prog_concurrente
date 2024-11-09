@@ -345,11 +345,16 @@ func (master *Master) handleRecommendation(conn *net.Conn) {
 	}
 	log.Printf("INFO: handleRec: Response sent\n")
 }
+
 func getComment(rating, max, min, mean float64) string {
 	if rating > (max+mean)/2 {
 		return "Altamente Recomendado. Muy por encima de la media"
-	} else if rating > mean {
+	} else if rating > mean+(max-mean)/3 {
 		return "Recomendado. Por encima de la media"
+	} else if rating > mean {
+		return "Ligeramente Recomendado. Justo por encima de la media"
+	} else if rating > mean-(mean-min)/3 {
+		return "Ligeramente No Recomendado. Justo por debajo de la media"
 	} else if rating > (mean+min)/2 {
 		return "Poco Recomendado. Por debajo de la media"
 	} else {
@@ -413,8 +418,8 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 	// Sumatoria de los gradientes de los factores latentes de usuario obtenido de cada batch
 	for i := 0; i < nBatches; i++ {
 		partialUserFactors := <-partialUserFactorsCh
-		for j, weightedGrad := range partialUserFactors.WeightedGrad {
-			userFactorsGrads[j] += weightedGrad
+		for j := range partialUserFactors.WeightedGrad {
+			userFactorsGrads[j] += partialUserFactors.WeightedGrad[j]
 		}
 		weightCount += partialUserFactors.Count
 	}
@@ -427,8 +432,8 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 
 	masterUserFactors.UserId = request.UserId
 	masterUserFactors.UserFactors = userFactorsGrads
-	log.Println("INFO: Count:", weightCount)
-	log.Println("INFO: User factors updated:", masterUserFactors.UserFactors)
+
+	log.Println("INFO: User factors updated.")
 	cond.L.Lock()
 	cond.Broadcast()
 	cond.L.Unlock()
