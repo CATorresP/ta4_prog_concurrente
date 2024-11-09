@@ -67,50 +67,7 @@ func getUserInput(prompt string) string {
 }
 
 func menu() {
-	rand.Seed(time.Now().UnixNano())
-	userId := rand.Intn(500) + 1
 
-	Genres := Genres{}
-	err := LoadGenres(&Genres)
-	if err != nil {
-		panic(err)
-	}
-
-	displayGenres(&Genres)
-
-	genreInput := getUserInput("Enter the genre indices (comma separated): ")
-	genreIndices := strings.Split(genreInput, ",")
-	var genreIds []int
-	for _, index := range genreIndices {
-		id, err := strconv.Atoi(strings.TrimSpace(index))
-		if err == nil {
-			genreIds = append(genreIds, id-1)
-		}
-	}
-
-	quantityInput := getUserInput("Enter the number of recommendations: ")
-	quantity, err := strconv.Atoi(quantityInput)
-	if err != nil {
-		panic("Invalid quantity")
-	}
-
-	request := createClientRecRequest(userId, quantity, genreIds)
-
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", "172.21.0.3", syncutils.ServicePort))
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
-	err = syncutils.SendObjectAsJsonMessage(&request, &conn)
-	if err != nil {
-		panic(err)
-	}
-	var response syncutils.MasterRecResponse
-	err = syncutils.ReceiveJsonMessageAsObject(&response, &conn)
-	if err != nil {
-		panic(err)
-	}
-	displayRecommendations(&response)
 }
 
 func Banner() {
@@ -140,10 +97,53 @@ func createClientRecRequest(userId int, quantity int, genreIds []int) syncutils.
 }
 
 func main() {
-	for !endProgram {
-		Banner()
-		menu()
-		//clear the screen
-		fmt.Print("\033[H\033[2J")
+
+	Banner()
+	rand.Seed(time.Now().UnixNano())
+	userId := rand.Intn(500) + 1
+
+	Genres := Genres{}
+	err := LoadGenres(&Genres)
+	if err != nil {
+		panic(err)
 	}
+
+	displayGenres(&Genres)
+
+	genreInput := getUserInput("Enter the genre indices (comma separated): ")
+	genreIndices := strings.Split(genreInput, ",")
+	var genreIds []int
+	for _, index := range genreIndices {
+		id, err := strconv.Atoi(strings.TrimSpace(index))
+		if err == nil {
+			genreIds = append(genreIds, id)
+		}
+	}
+
+	quantityInput := getUserInput("Enter the number of recommendations: ")
+	quantity, err := strconv.Atoi(quantityInput)
+	if err != nil {
+		panic("Invalid quantity")
+	}
+	fmt.Printf("User ID: %d\n", userId)
+	fmt.Printf("Genres: %v\n", genreIds)
+	fmt.Printf("Quantity: %d\n", quantity)
+	request := createClientRecRequest(userId, quantity, genreIds)
+
+	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", "172.21.0.3", syncutils.ServicePort))
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+	err = syncutils.SendObjectAsJsonMessage(&request, &conn)
+	if err != nil {
+		panic(err)
+	}
+	var response syncutils.MasterRecResponse
+	err = syncutils.ReceiveJsonMessageAsObject(&response, &conn)
+	if err != nil {
+		panic(err)
+	}
+	displayRecommendations(&response)
+
 }
