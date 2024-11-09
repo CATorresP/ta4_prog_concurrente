@@ -202,11 +202,11 @@ func receiveRecRequest(recRequest *syncutils.MasterRecRequest, conn *net.Conn) e
 }
 
 func (slave *Slave) calcUserFactors(partialUserFactors *syncutils.SlavePartialUserFactors, request *syncutils.MasterRecRequest) error {
-	weightedGrad := slave.model.UpdateUserFactors(request.UserRatings, &request.UserFactors, request.StartMovieId, request.EndMovieId)
+	weightedGrad, count := slave.model.UpdateUserFactors(request.UserRatings, &request.UserFactors, request.StartMovieId, request.EndMovieId)
 
 	partialUserFactors.UserId = request.UserId
 	partialUserFactors.WeightedGrad = weightedGrad
-
+	partialUserFactors.Count = count
 	return nil
 }
 

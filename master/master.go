@@ -409,19 +409,29 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 	}()
 
 	userFactorsGrads := make([]float64, master.modelConfig.NumFeatures)
+	weightCount := 0
+	// Sumatoria de los gradientes de los factores latentes de usuario obtenido de cada batch
 	for i := 0; i < nBatches; i++ {
 		partialUserFactors := <-partialUserFactorsCh
 		for j, weightedGrad := range partialUserFactors.WeightedGrad {
 			userFactorsGrads[j] += weightedGrad
 		}
+		weightCount += partialUserFactors.Count
 	}
+
+	if weightCount != 0 {
+		for i, weightedGrad := range userFactorsGrads {
+			userFactorsGrads[i] += weightedGrad / float64(weightCount)
+		}
+	}
+
 	masterUserFactors.UserId = request.UserId
 	masterUserFactors.UserFactors = userFactorsGrads
 
+	log.Println("INFO: User factors updated.")
 	cond.L.Lock()
 	cond.Broadcast()
 	cond.L.Unlock()
-
 	for i := 0; i < nBatches; i++ {
 		partialRecommendation := <-partialRecommendationCh
 		if partialRecommendation.Count > 0 {
@@ -434,11 +444,13 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 			if partialRecommendation.Min < *min {
 				*min = partialRecommendation.Min
 			}
-			if len(*predictions) > request.Quantity {
+			if i > 0 {
 				sort.Slice(*predictions, func(i, j int) bool {
 					return (*predictions)[i].Rating > (*predictions)[j].Rating
 				})
-				*predictions = (*predictions)[:request.Quantity]
+				if len(*predictions) > request.Quantity {
+					*predictions = (*predictions)[:request.Quantity]
+				}
 			}
 		}
 	}

@@ -47,6 +47,7 @@ type MasterRecRequest struct {
 type SlavePartialUserFactors struct {
 	UserId       int       `json:"userId"`
 	WeightedGrad []float64 `json:"userFactors"`
+	Count        int       `json:"count"`
 }
 
 type MasterUserFactors struct {
