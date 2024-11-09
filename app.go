@@ -95,14 +95,19 @@ func createClientRecRequest(userId int, quantity int, genreIds []int) syncutils.
 	}
 }
 
-func appHandler(){
-	
+func idHandler() int {
 	userIdInput := getUserInput("Enter your user ID (0-1200): ")
 	userId, err := strconv.Atoi(userIdInput)
 	if err != nil || userId < 0 || userId > 1200 {
 		panic("Invalid user ID")
 	}
+	return userId
+}
 
+
+func appHandler(){
+	
+	userId := idHandler()
 	Genres := Genres{}
 	err := LoadGenres(&Genres)
 	if err != nil {
@@ -145,12 +150,13 @@ func appHandler(){
 	if err != nil {
 		panic(err)
 	}
+	displayRecommendations(&response)
 }
 
 func main() {
 
 	Banner()
 	appHandler()
-	displayRecommendations(&response)
+
 
 }
