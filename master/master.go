@@ -347,19 +347,25 @@ func (master *Master) handleRecommendation(conn *net.Conn) {
 }
 
 func getComment(rating, max, min, mean float64) string {
-	if rating > (max+mean)/2 {
+	highThreshold1 := mean + (max-mean)*0.90
+	highThreshold2 := mean + (max-mean)*0.60
+	lowThreshold1 := mean - (mean-min)*0.60
+	lowThreshold2 := mean - (mean-min)*0.90
+
+	if rating > highThreshold1 {
 		return "Altamente Recomendado. Muy por encima de la media"
-	} else if rating > mean+(max-mean)/3 {
-		return "Recomendado. Por encima de la media"
+	} else if rating > highThreshold2 {
+		return "Recomendado. Bastante por encima de la media"
 	} else if rating > mean {
-		return "Ligeramente Recomendado. Justo por encima de la media"
-	} else if rating > mean-(mean-min)/3 {
+		return "Ligeramente Recomendado. Por encima de la media"
+	} else if rating > lowThreshold1 {
 		return "Ligeramente No Recomendado. Justo por debajo de la media"
-	} else if rating > (mean+min)/2 {
-		return "Poco Recomendado. Por debajo de la media"
+	} else if rating > lowThreshold2 {
+		return "Poco Recomendado. Bastante por debajo de la media"
 	} else {
-		return "Muy poco recomendado. Muy por debajo de la media"
+		return "Muy Poco Recomendado. Muy por debajo de la media"
 	}
+
 }
 
 func receiveRecommendationRequest(conn *net.Conn, request *syncutils.ClientRecRequest) error {
@@ -449,13 +455,11 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 			if partialRecommendation.Min < *min {
 				*min = partialRecommendation.Min
 			}
-			if i > 0 {
-				sort.Slice(*predictions, func(i, j int) bool {
-					return (*predictions)[i].Rating > (*predictions)[j].Rating
-				})
-				if len(*predictions) > request.Quantity {
-					*predictions = (*predictions)[:request.Quantity]
-				}
+			sort.Slice(*predictions, func(i, j int) bool {
+				return (*predictions)[i].Rating > (*predictions)[j].Rating
+			})
+			if len(*predictions) > request.Quantity {
+				*predictions = (*predictions)[:request.Quantity]
 			}
 		}
 	}
