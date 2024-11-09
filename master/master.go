@@ -420,15 +420,15 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 	}
 
 	if weightCount != 0 {
-		for i, weightedGrad := range userFactorsGrads {
-			userFactorsGrads[i] += weightedGrad / float64(weightCount)
+		for i := range userFactorsGrads {
+			userFactorsGrads[i] /= float64(weightCount)
 		}
 	}
 
 	masterUserFactors.UserId = request.UserId
 	masterUserFactors.UserFactors = userFactorsGrads
-
-	log.Println("INFO: User factors updated.")
+	log.Println("INFO: Count:", weightCount)
+	log.Println("INFO: User factors updated:", masterUserFactors.UserFactors)
 	cond.L.Lock()
 	cond.Broadcast()
 	cond.L.Unlock()
