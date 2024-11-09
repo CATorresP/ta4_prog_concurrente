@@ -455,11 +455,13 @@ func (master *Master) handleModelRecommendation(predictions *[]syncutils.Predict
 			if partialRecommendation.Min < *min {
 				*min = partialRecommendation.Min
 			}
-			sort.Slice(*predictions, func(i, j int) bool {
-				return (*predictions)[i].Rating > (*predictions)[j].Rating
-			})
-			if len(*predictions) > request.Quantity {
-				*predictions = (*predictions)[:request.Quantity]
+			if i > 0 {
+				sort.Slice(*predictions, func(i, j int) bool {
+					return (*predictions)[i].Rating > (*predictions)[j].Rating
+				})
+				if len(*predictions) > request.Quantity {
+					*predictions = (*predictions)[:request.Quantity]
+				}
 			}
 		}
 	}

@@ -265,10 +265,10 @@ func (slave *Slave) processRecommendation(response *syncutils.SlaveRecResponse, 
 		response.Count = 0
 	} else {
 		pred = pred[:count]
+		sort.Slice(pred, func(i, j int) bool {
+			return pred[i].Rating > pred[j].Rating
+		})
 		if count > request.Quantity {
-			sort.Slice(pred, func(i, j int) bool {
-				return pred[i].Rating > pred[j].Rating
-			})
 			response.Predictions = pred[:request.Quantity]
 		} else {
 			response.Predictions = pred
