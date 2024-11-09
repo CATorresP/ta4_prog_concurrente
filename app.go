@@ -3,13 +3,12 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"math/rand"
+
 	"net"
 	"os"
 	"recommendation-service/syncutils"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var endProgram = false
@@ -96,11 +95,13 @@ func createClientRecRequest(userId int, quantity int, genreIds []int) syncutils.
 	}
 }
 
-func main() {
-
-	Banner()
-	rand.Seed(time.Now().UnixNano())
-	userId := rand.Intn(500) + 1
+func appHandler(){
+	
+	userIdInput := getUserInput("Enter your user ID (0-1200): ")
+	userId, err := strconv.Atoi(userIdInput)
+	if err != nil || userId < 0 || userId > 1200 {
+		panic("Invalid user ID")
+	}
 
 	Genres := Genres{}
 	err := LoadGenres(&Genres)
@@ -144,6 +145,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func main() {
+
+	Banner()
+	appHandler()
 	displayRecommendations(&response)
 
 }
